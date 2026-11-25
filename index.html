@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Quản lý kho</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700&display=swap" rel="stylesheet">
@@ -501,6 +502,18 @@ function adminView(){
     <p class="hint">Người mới đăng ký ở “Chờ duyệt”. Chọn vai trò và kho được phép, rồi bấm Lưu.</p>
     <div class="table-wrap"><table><thead><tr><th>Email</th><th>Vai trò</th><th>Kho được phân</th><th></th></tr></thead>
     <tbody>${userRows}</tbody></table></div></div>
+  <div class="card"><h2>Xuất và sao lưu</h2>
+    <p class="hint">Chỉ quản trị viên thấy phần này. File sao lưu gồm hàng hóa, kho, lô và phiếu. Tài khoản người dùng không nằm trong file sao lưu.</p>
+    <div class="toolbar">
+      <button class="ghost" onclick="exportXlsx()">Xuất Excel (tất cả kho)</button>
+      <button class="ghost" onclick="backupJson()">Tải sao lưu JSON</button>
+    </div>
+    <div class="toolbar">
+      <input type="file" id="restoreFile" accept="application/json,.json">
+      <button class="ghost danger" onclick="restoreBackup()">Khôi phục từ file</button>
+    </div>
+    <p class="hint">Khôi phục ghi đè các mục có cùng mã. Dữ liệu tạo sau khi sao lưu sẽ không bị xóa.</p>
+  </div>
   <div class="card"><h2>Kho</h2>
     <ul>${whs.map(w => `<li>${esc(w.name)}</li>`).join('') || '<li class="hint">Chưa có kho.</li>'}</ul>
     <div class="toolbar"><input id="newWh" placeholder="Tên kho mới, ví dụ Kho A"><button class="primary" onclick="addWh()">Thêm kho</button></div>
@@ -550,8 +563,113 @@ function render(){
   if (tab === 'items') drawItems();
 }
 
+function saveBlob(name, blob){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function collectAll(){
+  const its = await getAll(collection(db, 'items'));
+  const ws = await getAll(collection(db, 'warehouses'));
+  const data = {version: 2, exportedAt: new Date().toISOString(), items: its, warehouses: ws, lots: {}, txs: {}};
+  for (const w of ws) {
+    data.lots[w.id] = await getAll(collection(db, 'warehouses', w.id, 'lots'));
+    data.txs[w.id] = await getAll(collection(db, 'warehouses', w.id, 'txs'));
+  }
+  return data;
+}
+
+async function exportXlsx(){
+  if (!isAdmin()) return;
+  if (typeof XLSX === 'undefined') return fail('Chưa tải được thư viện Excel. Kiểm tra kết nối rồi thử lại.');
+  try {
+    const d = await collectAll();
+    const wname = id => d.warehouses.find(w => w.id === id)?.name || '(đã xóa)';
+    const itemRows = d.items.map(i => ({
+      'Mã hàng': i.sku, 'Tên hàng': i.name, 'Loại': LOAI[i.loai]?.label || '', 'Quy cách': i.quy || '',
+      'Đơn vị': i.unit, 'Danh mục': i.cat || '', 'Tối thiểu': i.min || 0,
+      'Thuộc tính': (LOAI[i.loai]?.fields || []).map(([k, l]) => `${l}: ${i.attrs?.[k] || ''}`).join('; ')
+    }));
+    const lotRows = [], txRows = [];
+    for (const w of d.warehouses) {
+      for (const l of d.lots[w.id] || []) {
+        const it = d.items.find(x => x.id === l.itemId) || {};
+        lotRows.push({'Kho': w.name, 'Mã hàng': it.sku || '', 'Tên hàng': it.name || '(đã xóa)', 'Số lô': l.lot,
+          'Hạn dùng': fmtDate(l.exp), 'Còn (ngày)': dayDiff(l.exp), 'Số lượng': l.qty, 'Đơn vị': it.unit || '', 'Nhà cung cấp': l.ncc || ''});
+      }
+      for (const t of d.txs[w.id] || []) {
+        txRows.push({'Kho': w.name, 'Thời gian': fmtTime(t.ts), 'Mã hàng': t.sku, 'Tên hàng': t.name,
+          'Loại': TYPE[t.type] || t.type, 'Số lượng': t.qty, 'Đơn vị': t.unit, 'Số lô': t.alloc || '',
+          'Tồn sau': t.after, 'Ghi chú': t.note || '', 'Người thực hiện': t.by || ''});
+      }
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(itemRows), 'Hàng hóa');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lotRows), 'Tồn theo lô');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(txRows), 'Lịch sử');
+    const buf = XLSX.write(wb, {bookType: 'xlsx', type: 'array'});
+    saveBlob(`kho-${ymd(new Date())}.xlsx`, new Blob([buf], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    flash = {ok: true, text: 'Đã xuất file Excel.'};
+  } catch(e) {
+    console.error(e);
+    flash = {ok: false, text: errMsg(e)};
+  }
+  render();
+}
+
+async function backupJson(){
+  if (!isAdmin()) return;
+  try {
+    const d = await collectAll();
+    saveBlob(`kho-sao-luu-${ymd(new Date())}.json`, new Blob([JSON.stringify(d)], {type: 'application/json'}));
+    flash = {ok: true, text: 'Đã tải file sao lưu.'};
+  } catch(e) {
+    console.error(e);
+    flash = {ok: false, text: errMsg(e)};
+  }
+  render();
+}
+
+async function restoreBackup(){
+  if (!isAdmin()) return;
+  const file = document.getElementById('restoreFile').files[0];
+  if (!file) return fail('Chọn file sao lưu trước.');
+  let d;
+  try { d = JSON.parse(await file.text()); }
+  catch(e) { return fail('Không đọc được file.'); }
+  if (d.version !== 2 || !Array.isArray(d.items) || !Array.isArray(d.warehouses) || typeof d.lots !== 'object' || typeof d.txs !== 'object')
+    return fail('File không đúng định dạng sao lưu của ứng dụng này.');
+  if (!confirm('Khôi phục sẽ ghi đè các mục có cùng mã. Tiếp tục?')) return;
+
+  const ops = [];
+  const add = (path, rec) => { const {id, ...data} = rec; ops.push([path, id, data]); };
+  d.items.forEach(r => add(['items'], r));
+  d.warehouses.forEach(r => add(['warehouses'], r));
+  for (const [wh, arr] of Object.entries(d.lots)) arr.forEach(r => add(['warehouses', wh, 'lots'], r));
+  for (const [wh, arr] of Object.entries(d.txs)) arr.forEach(r => add(['warehouses', wh, 'txs'], r));
+
+  try {
+    for (let i = 0; i < ops.length; i += 400) {
+      const b = writeBatch(db);
+      ops.slice(i, i + 400).forEach(([p, id, data]) => b.set(doc(db, ...p, id), data));
+      await b.commit();
+    }
+    await loadBase();
+    flash = {ok: true, text: `Đã khôi phục ${n(ops.length)} bản ghi.`};
+  } catch(e) {
+    console.error(e);
+    flash = {ok: false, text: errMsg(e)};
+  }
+  render();
+}
+
 Object.assign(window, {login, register, logout, setWh, setTab, setQ, setFilter, doIn, doOut, doTransfer, destroyLot,
-  saveUser, addWh, openItem, saveItem, deleteItem, loaiChanged});
+  saveUser, addWh, openItem, saveItem, deleteItem, loaiChanged, exportXlsx, backupJson, restoreBackup});
 </script>
 </body>
 </html>
