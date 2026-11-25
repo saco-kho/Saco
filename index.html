@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quản lý kho</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#EDEFF2;--surface:#fff;--ink:#16202B;--muted:#5B6673;--line:#D5DAE1;--field:#B8C0CA;--accent:#1F5FBF;--warn:#D9480F;--warn-bg:#FFF1EB;--amber:#9A6200;--amber-bg:#FFF7E0;--ok:#2B8A3E;--ok-bg:#EBF7EE;--r:6px}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Be Vietnam Pro",system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:15px;line-height:1.5}
+.top{background:var(--ink);color:#fff;padding:12px 16px;padding-top:calc(12px + env(safe-area-inset-top,0px));display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.top select{background:#fff;color:var(--ink)}
+.top .hint{color:#9AA6B2;margin-right:auto}
+nav{display:flex;gap:4px;background:var(--surface);border-bottom:1px solid var(--line);padding:0 12px;overflow-x:auto;position:sticky;top:0;z-index:5}
+nav button{background:none;border:0;border-bottom:3px solid transparent;padding:14px 12px;font:inherit;color:var(--muted);cursor:pointer;white-space:nowrap}
+nav button.on{color:var(--ink);border-bottom-color:var(--accent);font-weight:500}
+main{max-width:1150px;margin:0 auto;padding:20px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:20px}
+.narrow{max-width:380px;margin:40px auto}
+h2{font-size:16px;margin:0 0 12px;font-weight:700}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{color:var(--muted);font-weight:500;font-size:13px;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.low td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+.table-wrap{overflow-x:auto}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.toolbar input{flex:1;min-width:180px}
+input,select{font:inherit;padding:8px 10px;border:1px solid var(--field);border-radius:var(--r);background:#fff;color:var(--ink);min-width:0}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button{font:inherit}
+button.primary{background:var(--accent);color:#fff;border:0;padding:9px 14px;border-radius:var(--r);font-weight:500;cursor:pointer}
+button.ghost{background:none;border:1px solid var(--field);padding:6px 10px;border-radius:var(--r);cursor:pointer;color:var(--ink)}
+button.danger{color:var(--warn);border-color:#F0B9A3}
+button:disabled{opacity:.5;cursor:not-allowed}
+.actions{display:flex;gap:6px;justify-content:flex-end}
+.badge,.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.badge.exp,.tag.out,.tag.chuyen_di{background:var(--warn-bg);color:var(--warn)}
+.badge.near{background:var(--amber-bg);color:var(--amber)}
+.badge.ok,.tag.in,.tag.chuyen_den{background:var(--ok-bg);color:var(--ok)}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;align-items:start}
+.stack{display:flex;flex-direction:column;gap:10px}
+.stack label,.form-grid label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.full{grid-column:1/-1}
+fieldset{border:0;padding:0;margin:0;min-width:0}
+dialog{border:0;border-radius:8px;padding:20px;width:min(560px,92vw);color:var(--ink)}
+dialog::backdrop{background:rgba(22,32,43,.5)}
+.hint{font-size:13px;color:var(--muted)}
+.err{color:var(--warn);font-size:13px;margin:0;min-height:1em}
+.ok{color:var(--ok);font-size:14px;margin:0 0 12px}
+.empty{color:var(--muted);padding:16px 0;text-align:center;margin:0}
+.chk{display:inline-flex;gap:4px;margin-right:12px;font-size:13px;align-items:center;white-space:nowrap}
+.dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+@media(max-width:900px){.grid3{grid-template-columns:1fr}}
+@media(max-width:600px){.form-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div id="app"><p class="empty">Đang tải…</p></div>
+
+<dialog id="dlg">
+  <form id="itemForm" onsubmit="saveItem(event)">
+    <h2 id="dlgTitle"></h2>
+    <div class="form-grid">
+      <label>Mã hàng<input name="sku" required></label>
+      <label>Đơn vị tính<input name="unit" placeholder="hộp, chai, cái"></label>
+      <label class="full">Tên hàng<input name="nm" required></label>
+      <label class="full">Quy cách đóng gói<input name="quy" placeholder="Hộp 10 vỉ x 10 viên"></label>
+      <label>Danh mục<input name="cat"></label>
+      <label>Mức tối thiểu<input name="min" type="number" min="0" value="0"></label>
+      <label class="full">Loại hàng<select name="loai" onchange="loaiChanged(this.value)">
+        <option value="duoc">Dược phẩm</option><option value="mypham">Mỹ phẩm</option><option value="tbyt">Thiết bị y tế</option>
+      </select></label>
+      <div class="full form-grid" id="attrs"></div>
+    </div>
+    <p class="err" id="errItem"></p>
+    <div class="dlg-actions">
+      <button type="button" class="ghost" onclick="document.getElementById('dlg').close()">Hủy</button>
+      <button class="primary" type="submit">Lưu</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs, query, where, orderBy, writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const fb = initializeApp({
+  apiKey: "AIzaSyApVLPAgfo-Eywx0OhB-CpIY7Ymmfs2x7U",
+  authDomain: "saco-d8ff2.firebaseapp.com",
+  projectId: "saco-d8ff2",
+  storageBucket: "saco-d8ff2.firebasestorage.app",
+  messagingSenderId: "1075895325931",
+  appId: "1:1075895325931:web:79002d9ae0625cf2ac1aae"
+});
+const auth = getAuth(fb), db = getFirestore(fb);
+
+const NEAR = 90;
+const ROLE = {admin:'Quản trị', keeper:'Thủ kho', viewer:'Người xem'};
+const TYPE = {in:'Nhập', out:'Xuất', chuyen_di:'Chuyển đi', chuyen_den:'Chuyển đến'};
+const LOAI = {
+  duoc: {label:'Dược phẩm', fields:[['sdk','Số đăng ký'],['hoatchat','Hoạt chất'],['nhom','Nhóm thuốc',['Kê đơn','Không kê đơn','Gây nghiện','Hướng thần','Tiền chất']],['bq','Điều kiện bảo quản']]},
+  mypham: {label:'Mỹ phẩm', fields:[['sdk','Số công bố'],['xx','Xuất xứ'],['pao','Hạn sau khi mở (tháng)']]},
+  tbyt: {label:'Thiết bị y tế', fields:[['sdk','Số lưu hành'],['pl','Phân loại',['A','B','C','D']],['hang','Hãng sản xuất'],['xx','Xuất xứ']]}
+};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const n = v => Number(v).toLocaleString('vi-VN');
+const z = x => String(x).padStart(2,'0');
+const ymd = d => `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`;
+const dayDiff = exp => { const t = new Date(); t.setHours(0,0,0,0); return Math.round((new Date(exp + 'T00:00:00') - t) / 864e5); };
+const fmtDate = s => s ? s.split('-').reverse().join('/') : '—';
+const fmtTime = t => new Date(t).toLocaleString('vi-VN');
+const expBadge = exp => {
+  const d = dayDiff(exp);
+  return d < 0 ? '<span class="badge exp">Hết hạn</span>' : d <= NEAR ? `<span class="badge near">Còn ${d} ngày</span>` : '<span class="badge ok">Còn hạn</span>';
+};
+const lotId = (itemId, lot, exp) => encodeURIComponent(`${itemId}|${lot}|${exp}`);
+const stockIn = (list, itemId) => list.filter(l => l.itemId === itemId).reduce((s,l) => s + l.qty, 0);
+const stockOf = id => stockIn(lots, id);
+const whName = id => whs.find(w => w.id === id)?.name || '(đã xóa)';
+const itemOf = id => items.find(x => x.id === id) || {name:'(đã xóa)', unit:'', sku:'', quy:''};
+const allowed = () => isAdmin() ? whs : whs.filter(w => (me?.warehouses || []).includes(w.id));
+const isAdmin = () => me?.role === 'admin';
+const canKeepWh = id => isAdmin() || (me?.role === 'keeper' && (me.warehouses || []).includes(id));
+const canKeepHere = () => !!wh && canKeepWh(wh);
+const errMsg = e => e?.code === 'permission-denied' ? 'Bạn không có quyền thực hiện thao tác này.' : 'Thao tác không thành công. Hãy thử lại.';
+const authMsg = e => ({
+  'auth/invalid-credential':'Email hoặc mật khẩu không đúng.', 'auth/user-not-found':'Email hoặc mật khẩu không đúng.',
+  'auth/wrong-password':'Email hoặc mật khẩu không đúng.', 'auth/invalid-email':'Email không hợp lệ.',
+  'auth/email-already-in-use':'Email này đã đăng ký.', 'auth/weak-password':'Mật khẩu cần ít nhất 6 ký tự.'
+}[e.code] || 'Không thực hiện được, hãy thử lại.');
+
+let me = null, screen = 'loading', authErr = '', items = [], whs = [], users = [], wh = '', lots = [], txs = [], tab = 'stock', q = '', filterItem = '', editId = null, flash = null;
+
+const getAll = async ref => (await getDocs(ref)).docs.map(d => ({id: d.id, ...d.data()}));
+const byName = (a,b) => a.name.localeCompare(b.name, 'vi');
+const fail = t => { flash = {ok:false, text:t}; render(); };
+
+function txData(whId, it, type, qty, alloc, note, after){
+  return {ts: Date.now(), by: auth.currentUser?.email || '', wh: whId, itemId: it.id, sku: it.sku, name: it.name,
+    unit: it.unit, quy: it.quy || '', type, qty, alloc, note: note || '', after};
+}
+
+function fefo(itemId, need, list){
+  const avail = list.filter(l => l.itemId === itemId && l.qty > 0 && dayDiff(l.exp) > 0).sort((a,b) => a.exp.localeCompare(b.exp));
+  let left = need;
+  const allocs = [];
+  for (const l of avail) {
+    if (!left) break;
+    const take = Math.min(l.qty, left);
+    allocs.push({...l, take});
+    left -= take;
+  }
+  return {left, allocs};
+}
+
+function applyAllocs(batch, whId, allocs){
+  for (const a of allocs) {
+    const ref = doc(db, 'warehouses', whId, 'lots', a.id);
+    const rest = a.qty - a.take;
+    if (rest > 0) batch.set(ref, {itemId: a.itemId, lot: a.lot, exp: a.exp, qty: rest, ncc: a.ncc || ''});
+    else batch.delete(ref);
+  }
+}
+
+async function act(fn, okText){
+  try {
+    await fn();
+    await loadWh();
+    flash = {ok:true, text:okText};
+  } catch(e) {
+    console.error(e);
+    flash = {ok:false, text:errMsg(e)};
+  }
+  render();
+}
+
+onAuthStateChanged(auth, async u => {
+  if (!u) { me = null; screen = 'login'; return render(); }
+  const ref = doc(db, 'users', u.uid);
+  let s = await getDoc(ref);
+  if (!s.exists()) {
+    await setDoc(ref, {email: u.email, role: null, warehouses: []});
+    s = await getDoc(ref);
+  }
+  me = s.data();
+  if (!me.role) { screen = 'pending'; return render(); }
+  await loadBase();
+  screen = 'app';
+  render();
+});
+
+async function loadBase(){
+  items = (await getAll(collection(db, 'items'))).sort(byName);
+  whs = (await getAll(collection(db, 'warehouses'))).sort(byName);
+  users = isAdmin() ? await getAll(collection(db, 'users')) : [];
+  if (!allowed().some(w => w.id === wh)) wh = allowed()[0]?.id || '';
+  await loadWh();
+}
+
+async function loadWh(){
+  if (!wh) { lots = []; txs = []; return; }
+  lots = await getAll(collection(db, 'warehouses', wh, 'lots'));
+  txs = await getAll(query(collection(db, 'warehouses', wh, 'txs'), orderBy('ts', 'desc')));
+}
+
+async function login(f){
+  authErr = '';
+  try { await signInWithEmailAndPassword(auth, f.em.value.trim(), f.pw.value); }
+  catch(e) { authErr = authMsg(e); render(); }
+}
+async function register(f){
+  authErr = '';
+  try { await createUserWithEmailAndPassword(auth, f.em.value.trim(), f.pw.value); }
+  catch(e) { authErr = authMsg(e); render(); }
+}
+const logout = () => signOut(auth);
+
+async function setWh(v){ wh = v; flash = null; await loadWh(); render(); }
+function setTab(t){ tab = t; flash = null; render(); }
+function setQ(v){ q = v; drawItems(); }
+function setFilter(v){ filterItem = v; render(); }
+
+async function doIn(f){
+  const it = items.find(x => x.id === f.item.value);
+  const lot = f.lot.value.trim(), exp = f.exp.value, qty = parseInt(f.qty.value), ncc = f.ncc.value.trim(), note = f.note.value.trim();
+  if (!it) return fail('Chọn mặt hàng.');
+  if (!lot || !exp) return fail('Nhập số lô và hạn sử dụng.');
+  if (dayDiff(exp) <= 0) return fail('Hạn sử dụng phải sau hôm nay.');
+  if (!(qty > 0)) return fail('Số lượng phải lớn hơn 0.');
+  const id = lotId(it.id, lot, exp), cur = lots.find(l => l.id === id), before = stockOf(it.id);
+  await act(async () => {
+    const b = writeBatch(db);
+    b.set(doc(db, 'warehouses', wh, 'lots', id), {itemId: it.id, lot, exp, qty: (cur?.qty || 0) + qty, ncc: cur?.ncc || ncc});
+    b.set(doc(collection(db, 'warehouses', wh, 'txs')), txData(wh, it, 'in', qty, `${lot} (${qty})`, note, before + qty));
+    await b.commit();
+  }, `Đã nhập ${n(qty)} ${it.unit} ${it.name}, lô ${lot}.`);
+}
+
+async function doOut(f){
+  const it = items.find(x => x.id === f.item.value), qty = parseInt(f.qty.value);
+  if (!it) return fail('Chọn mặt hàng.');
+  if (!(qty > 0)) return fail('Số lượng phải lớn hơn 0.');
+  const {left, allocs} = fefo(it.id, qty, lots);
+  if (left > 0) return fail(`Chỉ còn ${n(qty - left)} ${it.unit} còn hạn dùng.`);
+  const before = stockOf(it.id), reason = f.reason.value, note = f.note.value.trim();
+  await act(async () => {
+    const b = writeBatch(db);
+    applyAllocs(b, wh, allocs);
+    b.set(doc(collection(db, 'warehouses', wh, 'txs')), txData(wh, it, 'out', qty,
+      allocs.map(a => `${a.lot} (${a.take})`).join(', '), [reason, note].filter(Boolean).join(' · '), before - qty));
+    await b.commit();
+  }, `Đã xuất ${n(qty)} ${it.unit} ${it.name}.`);
+}
+
+async function doTransfer(f){
+  const to = f.to.value, it = items.find(x => x.id === f.item.value), qty = parseInt(f.qty.value), note = f.note.value.trim();
+  if (!it) return fail('Chọn mặt hàng.');
+  if (!to || to === wh) return fail('Chọn kho đích khác kho hiện tại.');
+  if (!canKeepWh(to)) return fail('Bạn không có quyền ghi vào kho đích.');
+  if (!(qty > 0)) return fail('Số lượng phải lớn hơn 0.');
+  const {left, allocs} = fefo(it.id, qty, lots);
+  if (left > 0) return fail(`Chỉ còn ${n(qty - left)} ${it.unit} còn hạn dùng để chuyển.`);
+  let toLots;
+  try { toLots = await getAll(collection(db, 'warehouses', to, 'lots')); }
+  catch(e) { return fail(errMsg(e)); }
+  const fromBefore = stockOf(it.id), toBefore = stockIn(toLots, it.id);
+  const alloc = allocs.map(a => `${a.lot} (${a.take})`).join(', ');
+  const suffix = note ? ' · ' + note : '';
+  await act(async () => {
+    const b = writeBatch(db);
+    applyAllocs(b, wh, allocs);
+    for (const a of allocs) {
+      const tid = lotId(it.id, a.lot, a.exp), tc = toLots.find(l => l.id === tid);
+      b.set(doc(db, 'warehouses', to, 'lots', tid), {itemId: it.id, lot: a.lot, exp: a.exp, qty: (tc?.qty || 0) + a.take, ncc: tc?.ncc || a.ncc || ''});
+    }
+    b.set(doc(collection(db, 'warehouses', wh, 'txs')), txData(wh, it, 'chuyen_di', qty, alloc, `Đến: ${whName(to)}${suffix}`, fromBefore - qty));
+    b.set(doc(collection(db, 'warehouses', to, 'txs')), txData(to, it, 'chuyen_den', qty, alloc, `Từ: ${whName(wh)}${suffix}`, toBefore + qty));
+    await b.commit();
+  }, `Đã chuyển ${n(qty)} ${it.unit} ${it.name} sang ${whName(to)}.`);
+}
+
+async function destroyLot(id){
+  const l = lots.find(x => x.id === id);
+  if (!l) return;
+  const it = itemOf(l.itemId);
+  if (!confirm(`Hủy ${n(l.qty)} ${it.unit} ${it.name}, lô ${l.lot}, đã hết hạn?`)) return;
+  const before = stockOf(it.id);
+  await act(async () => {
+    const b = writeBatch(db);
+    b.delete(doc(db, 'warehouses', wh, 'lots', id));
+    b.set(doc(collection(db, 'warehouses', wh, 'txs')), txData(wh, it, 'out', l.qty, `${l.lot} (${l.qty})`, 'Hủy hết hạn', before - l.qty));
+    await b.commit();
+  }, 'Đã hủy lô hết hạn.');
+}
+
+async function saveUser(uid){
+  const role = document.getElementById('r_' + uid).value || null;
+  if (uid === auth.currentUser.uid && !role) return fail('Không thể gỡ quyền của chính bạn.');
+  const list = [...document.querySelectorAll(`input[data-uid="${uid}"]:checked`)].map(c => c.value);
+  try {
+    await updateDoc(doc(db, 'users', uid), {role, warehouses: list});
+    users = await getAll(collection(db, 'users'));
+    flash = {ok:true, text:'Đã lưu phân quyền.'};
+  } catch(e) { flash = {ok:false, text:errMsg(e)}; }
+  render();
+}
+
+async function addWh(){
+  const name = document.getElementById('newWh').value.trim();
+  if (!name) return fail('Nhập tên kho.');
+  try {
+    await setDoc(doc(collection(db, 'warehouses')), {name});
+    whs = (await getAll(collection(db, 'warehouses'))).sort(byName);
+    flash = {ok:true, text:`Đã tạo ${name}.`};
+  } catch(e) { flash = {ok:false, text:errMsg(e)}; }
+  render();
+}
+
+function attrHtml(loai, attrs = {}){
+  return (LOAI[loai]?.fields || []).map(([k, l, opt]) => `<label>${l}${opt
+    ? `<select name="a_${k}">${opt.map(o => `<option ${attrs[k] === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`
+    : `<input name="a_${k}" value="${esc(attrs[k] || '')}">`}</label>`).join('');
+}
+function loaiChanged(v){ $('attrs').innerHTML = attrHtml(v); }
+
+function openItem(id){
+  editId = id ?? null;
+  const it = items.find(x => x.id === id) || {sku:'', name:'', unit:'', quy:'', cat:'', min:0, loai:'duoc', attrs:{}};
+  const f = $('itemForm');
+  $('dlgTitle').textContent = id ? 'Sửa hàng hóa' : 'Thêm hàng hóa';
+  f.sku.value = it.sku; f.nm.value = it.name; f.unit.value = it.unit; f.quy.value = it.quy || '';
+  f.cat.value = it.cat || ''; f.min.value = it.min || 0; f.loai.value = it.loai || 'duoc';
+  $('attrs').innerHTML = attrHtml(f.loai.value, it.attrs);
+  $('errItem').textContent = '';
+  $('dlg').showModal();
+}
+
+async function saveItem(e){
+  e.preventDefault();
+  const f = e.target, err = $('errItem');
+  const loai = f.loai.value;
+  const d = {sku: f.sku.value.trim(), name: f.nm.value.trim(), unit: f.unit.value.trim() || 'cái', quy: f.quy.value.trim(),
+    cat: f.cat.value.trim() || 'Khác', min: Math.max(0, parseInt(f.min.value) || 0), loai, attrs: {}};
+  LOAI[loai].fields.forEach(([k]) => d.attrs[k] = (f['a_' + k]?.value || '').trim());
+  if (!d.sku || !d.name) return err.textContent = 'Cần nhập mã và tên hàng.';
+  if (items.some(x => x.sku.toLowerCase() === d.sku.toLowerCase() && x.id !== editId)) return err.textContent = 'Mã hàng đã tồn tại.';
+  try {
+    if (editId) await updateDoc(doc(db, 'items', editId), d);
+    else await addDoc(collection(db, 'items'), d);
+    $('dlg').close();
+    await loadBase();
+    flash = {ok:true, text:'Đã lưu hàng hóa.'};
+  } catch(e2) { err.textContent = errMsg(e2); }
+  render();
+}
+
+async function deleteItem(id){
+  let used = 0;
+  for (const w of whs) {
+    used += (await getDocs(query(collection(db, 'warehouses', w.id, 'lots'), where('itemId', '==', id)))).size;
+  }
+  if (used) return alert('Mặt hàng còn lô trong kho, không thể xóa.');
+  if (!confirm(`Xóa “${itemOf(id).name}” khỏi danh mục?`)) return;
+  try {
+    await deleteDoc(doc(db, 'items', id));
+    await loadBase();
+    flash = {ok:true, text:'Đã xóa hàng hóa.'};
+  } catch(e) { flash = {ok:false, text:errMsg(e)}; }
+  render();
+}
+
+function noWh(){
+  return `<div class="card"><p class="empty">${isAdmin() ? 'Chưa có kho nào. Hãy tạo kho trong tab Quản trị.' : 'Bạn chưa được phân quyền cho kho nào. Hãy nhờ quản trị viên.'}</p></div>`;
+}
+const flashHtml = () => flash ? `<p class="${flash.ok ? 'ok' : 'err'}">${esc(flash.text)}</p>` : '';
+
+function stockView(){
+  if (!wh) return noWh();
+  const rows = [...lots].sort((a,b) => a.exp.localeCompare(b.exp));
+  if (!rows.length) return '<div class="card"><p class="empty">Kho này chưa có lô hàng nào.</p></div>';
+  return `<div class="card table-wrap"><table>
+    <thead><tr><th>Hàng hóa</th><th>Số lô</th><th>Hạn dùng</th><th>Trạng thái</th><th class="num">Số lượng</th><th>Nhà cung cấp</th><th></th></tr></thead>
+    <tbody>${rows.map(l => {
+      const it = itemOf(l.itemId), expired = dayDiff(l.exp) < 0;
+      return `<tr class="${expired ? 'low' : ''}"><td>${esc(it.name)}</td><td>${esc(l.lot)}</td><td>${fmtDate(l.exp)}</td>
+        <td>${expBadge(l.exp)}</td><td class="num">${n(l.qty)} ${esc(it.unit)}</td><td>${esc(l.ncc || '')}</td>
+        <td>${expired && canKeepHere() ? `<div class="actions"><button class="ghost danger" onclick="destroyLot('${l.id}')">Hủy lô</button></div>` : ''}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+
+function ioView(){
+  if (!wh) return noWh();
+  const opts = items.map(i => `<option value="${i.id}">${esc(i.sku)} · ${esc(i.name)} (tồn ${n(stockOf(i.id))} ${esc(i.unit)})</option>`).join('') || '<option value="">Chưa có hàng hóa</option>';
+  const toOpts = allowed().filter(w => w.id !== wh && canKeepWh(w.id)).map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('') || '<option value="">Không có kho đích</option>';
+  return `${flashHtml()}
+  ${canKeepHere() ? '' : '<p class="hint">Bạn chỉ xem được kho này. Cần quyền thủ kho để nhập, xuất hoặc chuyển.</p>'}
+  <fieldset ${canKeepHere() ? '' : 'disabled'}><div class="grid3">
+    <div class="card"><h2>Nhập kho</h2>
+      <form class="stack" onsubmit="event.preventDefault();doIn(this)">
+        <label>Mặt hàng<select name="item">${opts}</select></label>
+        <label>Số lô<input name="lot" required></label>
+        <label>Hạn sử dụng<input name="exp" type="date" required></label>
+        <label>Số lượng<input name="qty" type="number" min="1" required></label>
+        <label>Nhà cung cấp<input name="ncc"></label>
+        <label>Ghi chú<input name="note"></label>
+        <button class="primary">Ghi phiếu nhập</button>
+      </form></div>
+    <div class="card"><h2>Xuất kho</h2>
+      <form class="stack" onsubmit="event.preventDefault();doOut(this)">
+        <label>Mặt hàng<select name="item">${opts}</select></label>
+        <label>Số lượng<input name="qty" type="number" min="1" required></label>
+        <label>Lý do<select name="reason"><option>Xuất bán</option><option>Xuất dùng</option><option>Trả nhà cung cấp</option></select></label>
+        <label>Ghi chú<input name="note"></label>
+        <button class="primary">Ghi phiếu xuất</button>
+        <p class="hint">Xuất theo hạn gần nhất trước. Lô đã hết hạn không xuất được.</p>
+      </form></div>
+    <div class="card"><h2>Chuyển sang kho khác</h2>
+      <form class="stack" onsubmit="event.preventDefault();doTransfer(this)">
+        <label>Mặt hàng<select name="item">${opts}</select></label>
+        <label>Kho đích<select name="to">${toOpts}</select></label>
+        <label>Số lượng<input name="qty" type="number" min="1" required></label>
+        <label>Ghi chú<input name="note"></label>
+        <button class="primary">Ghi phiếu chuyển</button>
+        <p class="hint">Tồn trừ ở kho này và cộng ở kho đích, cùng lúc.</p>
+      </form></div>
+  </div></fieldset>`;
+}
+
+function cardView(){
+  if (!wh) return noWh();
+  const id = filterItem || items[0]?.id;
+  if (!id) return '<div class="card"><p class="empty">Chưa có hàng hóa.</p></div>';
+  const it = itemOf(id);
+  const rows = txs.filter(t => t.itemId === id).slice().reverse();
+  const opts = items.map(i => `<option value="${i.id}" ${i.id === id ? 'selected' : ''}>${esc(i.sku)} · ${esc(i.name)}</option>`).join('');
+  return `<div class="card">
+    <div class="toolbar"><select onchange="setFilter(this.value)" style="flex:1">${opts}</select></div>
+    <p class="hint">Tồn hiện tại tại ${esc(whName(wh))}: <b>${n(stockOf(id))} ${esc(it.unit)}</b></p>
+    ${rows.length ? `<div class="table-wrap"><table>
+      <thead><tr><th>Thời gian</th><th>Loại</th><th class="num">Số lượng</th><th class="num">Tồn sau</th><th>Số lô</th><th>Ghi chú</th><th>Người thực hiện</th></tr></thead>
+      <tbody>${rows.map(t => `<tr><td>${fmtTime(t.ts)}</td>
+        <td><span class="tag ${t.type}">${TYPE[t.type] || t.type}</span></td>
+        <td class="num">${['in','chuyen_den'].includes(t.type) ? '+' : '−'}${n(t.qty)}</td>
+        <td class="num">${n(t.after)}</td><td>${esc(t.alloc)}</td><td>${esc(t.note)}</td><td>${esc(t.by)}</td></tr>`).join('')}</tbody>
+    </table></div>` : '<p class="empty">Chưa có phát sinh nào.</p>'}
+  </div>`;
+}
+
+function logView(){
+  if (!wh) return noWh();
+  if (!txs.length) return '<div class="card"><p class="empty">Chưa có phiếu nào.</p></div>';
+  return `<div class="card table-wrap"><table>
+    <thead><tr><th>Thời gian</th><th>Mã</th><th>Tên hàng</th><th>Loại</th><th class="num">Số lượng</th><th>Số lô</th><th class="num">Tồn sau</th><th>Ghi chú</th><th>Người thực hiện</th></tr></thead>
+    <tbody>${txs.map(t => `<tr><td>${fmtTime(t.ts)}</td><td>${esc(t.sku)}</td><td>${esc(t.name)}</td>
+      <td><span class="tag ${t.type}">${TYPE[t.type] || t.type}</span></td>
+      <td class="num">${['in','chuyen_den'].includes(t.type) ? '+' : '−'}${n(t.qty)} ${esc(t.unit)}</td>
+      <td>${esc(t.alloc)}</td><td class="num">${n(t.after)}</td><td>${esc(t.note)}</td><td>${esc(t.by)}</td></tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function itemsView(){
+  return `<div class="toolbar">
+    <input placeholder="Tìm theo mã hoặc tên" value="${esc(q)}" oninput="setQ(this.value)" aria-label="Tìm hàng hóa">
+    ${isAdmin() ? '<button class="primary" onclick="openItem()">Thêm hàng hóa</button>' : ''}
+  </div>
+  <div class="card table-wrap"><table>
+    <thead><tr><th>Mã</th><th>Tên hàng</th><th>Loại</th><th>Quy cách</th><th>ĐVT</th><th class="num">Tối thiểu</th><th>Danh mục</th><th></th></tr></thead>
+    <tbody id="irows"></tbody>
+  </table></div>`;
+}
+
+function drawItems(){
+  const kw = q.trim().toLowerCase();
+  const list = items.filter(i => !kw || (i.sku + ' ' + i.name).toLowerCase().includes(kw));
+  const el = $('irows');
+  if (!el) return;
+  el.innerHTML = list.length ? list.map(i => `<tr>
+    <td>${esc(i.sku)}</td><td>${esc(i.name)}</td><td>${esc(LOAI[i.loai]?.label || '')}</td><td>${esc(i.quy)}</td>
+    <td>${esc(i.unit)}</td><td class="num">${n(i.min)}</td><td>${esc(i.cat)}</td>
+    <td>${isAdmin() ? `<div class="actions"><button class="ghost" onclick="openItem('${i.id}')">Sửa</button>
+      <button class="ghost danger" onclick="deleteItem('${i.id}')">Xóa</button></div>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="8" class="empty">Không tìm thấy hàng hóa phù hợp.</td></tr>';
+}
+
+function adminView(){
+  const userRows = users.map(u => `<tr>
+    <td>${esc(u.email)}</td>
+    <td><select id="r_${u.id}"><option value="">Chờ duyệt</option>${['admin','keeper','viewer'].map(r => `<option value="${r}" ${u.role === r ? 'selected' : ''}>${ROLE[r]}</option>`).join('')}</select></td>
+    <td>${whs.map(w => `<label class="chk"><input type="checkbox" data-uid="${u.id}" value="${w.id}" ${(u.warehouses || []).includes(w.id) ? 'checked' : ''}>${esc(w.name)}</label>`).join('') || '—'}</td>
+    <td><button class="primary" onclick="saveUser('${u.id}')">Lưu</button></td></tr>`).join('');
+  return `${flashHtml()}
+  <div class="card"><h2>Người dùng</h2>
+    <p class="hint">Người mới đăng ký ở “Chờ duyệt”. Chọn vai trò và kho được phép, rồi bấm Lưu.</p>
+    <div class="table-wrap"><table><thead><tr><th>Email</th><th>Vai trò</th><th>Kho được phân</th><th></th></tr></thead>
+    <tbody>${userRows}</tbody></table></div></div>
+  <div class="card"><h2>Kho</h2>
+    <ul>${whs.map(w => `<li>${esc(w.name)}</li>`).join('') || '<li class="hint">Chưa có kho.</li>'}</ul>
+    <div class="toolbar"><input id="newWh" placeholder="Tên kho mới, ví dụ Kho A"><button class="primary" onclick="addWh()">Thêm kho</button></div>
+  </div>`;
+}
+
+function appView(){
+  const ok = allowed();
+  const tabs = [['stock','Tồn theo lô'],['io','Nhập / xuất / chuyển'],['card','Thẻ kho'],['log','Lịch sử'],['items','Hàng hóa'], ...(isAdmin() ? [['admin','Quản trị']] : [])];
+  const views = {stock: stockView, io: ioView, card: cardView, log: logView, items: itemsView, admin: adminView};
+  return `<div class="top">
+    <select onchange="setWh(this.value)" ${ok.length ? '' : 'disabled'} aria-label="Chọn kho">
+      ${ok.length ? ok.map(w => `<option value="${w.id}" ${w.id === wh ? 'selected' : ''}>${esc(w.name)}</option>`).join('') : '<option>Chưa được phân kho</option>'}
+    </select>
+    <span class="hint">${esc(auth.currentUser?.email || '')} · ${ROLE[me.role] || ''}</span>
+    <button class="ghost" onclick="logout()" style="color:#fff;border-color:#5B6673">Đăng xuất</button>
+  </div>
+  <nav>${tabs.map(([k,l]) => `<button class="${k === tab ? 'on' : ''}" onclick="setTab('${k}')">${l}</button>`).join('')}</nav>
+  <main>${views[tab]()}</main>`;
+}
+
+function loginView(){
+  return `<div class="card narrow"><h2>Đăng nhập</h2>
+    <form class="stack" onsubmit="event.preventDefault();login(this)">
+      <input name="em" type="email" placeholder="Email" required autocomplete="email">
+      <input name="pw" type="password" placeholder="Mật khẩu" required minlength="6" autocomplete="current-password">
+      <p class="err">${esc(authErr)}</p>
+      <div class="dlg-actions" style="margin-top:0">
+        <button type="button" class="ghost" onclick="register(this.form)">Đăng ký</button>
+        <button class="primary">Đăng nhập</button>
+      </div>
+    </form></div>`;
+}
+
+function pendingView(){
+  return `<div class="card narrow"><h2>Chờ duyệt</h2>
+    <p>Tài khoản ${esc(auth.currentUser?.email || '')} đã được tạo. Quản trị viên cần phân quyền trước khi bạn dùng được.</p>
+    <div class="dlg-actions"><button class="ghost" onclick="location.reload()">Kiểm tra lại</button><button class="ghost" onclick="logout()">Đăng xuất</button></div></div>`;
+}
+
+function render(){
+  const root = $('app');
+  if (screen === 'loading') { root.innerHTML = '<p class="empty">Đang tải…</p>'; return; }
+  if (screen === 'login') { root.innerHTML = loginView(); return; }
+  if (screen === 'pending') { root.innerHTML = pendingView(); return; }
+  root.innerHTML = appView();
+  if (tab === 'items') drawItems();
+}
+
+Object.assign(window, {login, register, logout, setWh, setTab, setQ, setFilter, doIn, doOut, doTransfer, destroyLot,
+  saveUser, addWh, openItem, saveItem, deleteItem, loaiChanged});
+</script>
+</body>
+</html>
