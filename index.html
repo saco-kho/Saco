@@ -68,6 +68,20 @@ dialog::backdrop{background:rgba(22,32,43,.5)}
 .sig div{width:31%}
 .slipfoot{margin-top:20px;color:#000}
 @media print{@page{size:A4;margin:15mm}body>*:not(#slip){display:none!important}#slip{display:block!important}}
+.ex-head{display:flex;justify-content:space-between;gap:16px;font-size:12px;margin-bottom:10px}
+.ex-head .co{max-width:60%}
+.ex-head .formno{text-align:right;max-width:40%;font-size:11px}
+.center{text-align:center}
+.rightdate{text-align:right}
+.hdinv{text-align:right;font-size:12px;margin:8px 0}
+.sig5,.sig2{display:flex;justify-content:space-between;margin-top:30px;text-align:center;font-size:11px}
+.sig5 div{width:19%}
+.sig2 div{width:45%}
+.page{page-break-after:always}
+.page:last-child{page-break-after:auto}
+.ln{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ln select{flex:1}
+.ln input{width:80px}
 @media(max-width:900px){.grid3{grid-template-columns:1fr}}
 @media(max-width:600px){.form-grid{grid-template-columns:1fr}}
 </style>
@@ -124,6 +138,14 @@ const LOAI = {
   tbyt: {label:'Thiết bị y tế', fields:[['sdk','Số lưu hành'],['pl','Phân loại',['A','B','C','D']],['hang','Hãng sản xuất'],['xx','Xuất xứ']]}
 };
 
+const COMPANIES = {
+  sacophar: {name:'CÔNG TY CỔ PHẦN THƯƠNG MẠI VÀ THIẾT BỊ Y TẾ SACOPHAR', addr:'Số 76 A2 KĐT Đại Kim, Phường Định Công, Thành phố Hà Nội, Việt Nam', mst:'0109271551'},
+  sacopack: {name:'CÔNG TY TNHH THƯƠNG MẠI VÀ CÔNG NGHỆ SACOPACK', addr:'Số 76 A2 KĐT Đại Kim, đường Nguyễn Cảnh Dị, Phường Định Công, Thành phố Hà Nội, Việt Nam', mst:'0110474771'}
+};
+const savedPi = (() => { try { return JSON.parse(localStorage.getItem('kho-pi') || '{}'); } catch(e) { return {}; } })();
+let pi = {co:'sacophar', sh:'', kh:'', nh:'', ph:'', ...savedPi};
+let ox = {rcv:'', rcvAddr:'', rcvPh:'', why:'Xuất bán'};
+let outLines = [{item:'', lot:'', qty:''}];
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const n = v => Number(v).toLocaleString('vi-VN');
@@ -449,15 +471,7 @@ function ioView(){
         <label>Ghi chú<input name="note"></label>
         <button class="primary">Ghi phiếu nhập</button>
       </form></div>
-    <div class="card"><h2>Xuất kho</h2>
-      <form class="stack" onsubmit="event.preventDefault();doOut(this)">
-        <label>Mặt hàng<select name="item">${opts}</select></label>
-        <label>Số lượng<input name="qty" type="number" min="1" required></label>
-        <label>Lý do<select name="reason"><option>Xuất bán</option><option>Xuất dùng</option><option>Trả nhà cung cấp</option></select></label>
-        <label>Ghi chú<input name="note"></label>
-        <button class="primary">Ghi phiếu xuất</button>
-        <p class="hint">Xuất theo hạn gần nhất trước. Lô đã hết hạn không xuất được.</p>
-      </form></div>
+    ${outCard()}
     <div class="card"><h2>Chuyển sang kho khác</h2>
       <form class="stack" onsubmit="event.preventDefault();doTransfer(this)">
         <label>Mặt hàng<select name="item">${opts}</select></label>
@@ -707,12 +721,13 @@ async function restoreBackup(){
 
 function printBtn(){
   if (!justDid || !txs.length) return '';
-  return `<p class="ok">Đã ghi phiếu. <button class="primary" onclick="printTx(0)">In phiếu</button></p>`;
+  return `<p class="ok">Đã ghi phiếu. <button class="primary" onclick="printTx(0)">${txs[0].type === 'out' ? 'In phiếu xuất' : 'In phiếu'}</button></p>`;
 }
 
 function printTx(i){
   const t = txs[i];
   if (!t) return;
+  if (t.type === 'out') return printExport(t.no || t.id);
   const title = {in:'PHIẾU NHẬP KHO', out:'PHIẾU XUẤT KHO', chuyen_di:'PHIẾU CHUYỂN KHO', chuyen_den:'PHIẾU NHẬN CHUYỂN KHO'}[t.type] || 'PHIẾU KHO';
   const prefix = {in:'PN', out:'PX', chuyen_di:'CD', chuyen_den:'CN'}[t.type] || 'PK';
   const no = t.no || `${prefix}-${String(t.id || '').slice(0, 8).toUpperCase()}`;
@@ -735,8 +750,168 @@ function printTx(i){
   window.print();
 }
 
+function outCard(){
+  const rows = outLines.map((l, i) => {
+    const its = l.item ? lots.filter(x => x.itemId === l.item && x.qty > 0 && dayDiff(x.exp) > 0).sort((a, b) => a.exp.localeCompare(b.exp)) : [];
+    const unit = itemOf(l.item).unit || '';
+    return `<div class="ln">
+      <select onchange="pickItem(${i},this.value)">
+        <option value="">-- Chọn hàng --</option>
+        ${items.map(it => `<option value="${it.id}" ${it.id === l.item ? 'selected' : ''}>${esc(it.sku)} · ${esc(it.name)}</option>`).join('')}
+      </select>
+      <select onchange="setLine(${i},'lot',this.value)" ${l.item ? '' : 'disabled'}>
+        <option value="">-- Chọn lô --</option>
+        ${its.map(x => `<option value="${x.id}" ${x.id === l.lot ? 'selected' : ''}>Lô ${esc(x.lot)} · HSD ${fmtDate(x.exp)} · còn ${n(x.qty)} ${esc(unit)}</option>`).join('')}
+      </select>
+      <input type="number" min="1" placeholder="SL" value="${esc(l.qty)}" oninput="setLine(${i},'qty',this.value)">
+      <button type="button" class="ghost danger" onclick="delLine(${i})" ${outLines.length < 2 ? 'disabled' : ''}>×</button>
+    </div>`;
+  }).join('');
+  return `<div class="card"><h2>Xuất kho</h2>
+    <p class="hint">Thông tin in phiếu (không bắt buộc, để trống nếu không cần). Lưu trên máy này.</p>
+    <div class="stack">
+      <label>Công ty in phiếu<select onchange="setPi('co',this.value)">
+        <option value="sacophar" ${pi.co === 'sacophar' ? 'selected' : ''}>Sacophar</option>
+        <option value="sacopack" ${pi.co === 'sacopack' ? 'selected' : ''}>Sacopack</option>
+      </select></label>
+      <label>Số hóa đơn<input value="${esc(pi.sh)}" oninput="setPi('sh',this.value)"></label>
+      <label>Ký hiệu hóa đơn<input value="${esc(pi.kh)}" oninput="setPi('kh',this.value)"></label>
+      <label>Ngày hóa đơn<input type="date" value="${esc(pi.nh)}" onchange="setPi('nh',this.value)"></label>
+      <label>Điện thoại bên giao<input value="${esc(pi.ph)}" oninput="setPi('ph',this.value)"></label>
+    </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:14px 0">
+    <form class="stack" onsubmit="event.preventDefault();doOutMulti()">
+      <label>Người nhận hàng<input value="${esc(ox.rcv)}" oninput="setOx('rcv',this.value)" required></label>
+      <label>Địa chỉ người nhận<input value="${esc(ox.rcvAddr)}" oninput="setOx('rcvAddr',this.value)"></label>
+      <label>Điện thoại người nhận<input value="${esc(ox.rcvPh)}" oninput="setOx('rcvPh',this.value)"></label>
+      <label>Lý do xuất kho<input value="${esc(ox.why)}" oninput="setOx('why',this.value)"></label>
+      <p class="hint">Mỗi dòng là một lô: chọn hàng, chọn lô, nhập số lượng. Muốn xuất nhiều lô của cùng một hàng, thêm nhiều dòng.</p>
+      ${rows}
+      <button type="button" class="ghost" onclick="addLine()">+ Thêm dòng</button>
+      <button class="primary">Ghi phiếu xuất</button>
+    </form>
+  </div>`;
+}
+
+function pickItem(i, v){
+  outLines[i].item = v;
+  outLines[i].lot = '';
+  render();
+}
+
+function setPi(k, v){
+  pi[k] = v;
+  try { localStorage.setItem('kho-pi', JSON.stringify(pi)); } catch(e) {}
+}
+function setOx(k, v){ ox[k] = v; }
+function setLine(i, k, v){ outLines[i][k] = v; }
+function addLine(){ outLines.push({item:'', lot:'', qty:''}); render(); }
+function delLine(i){ outLines.splice(i, 1); render(); }
+
+async function doOutMulti(){
+  const reqs = outLines.filter(l => l.item || l.lot || l.qty).map(l => ({it: items.find(x => x.id === l.item), lot: lots.find(x => x.id === l.lot), qty: parseInt(l.qty)}));
+  if (!reqs.length) return fail('Thêm ít nhất một dòng hàng.');
+  if (reqs.some(r => !r.it)) return fail('Chọn mặt hàng cho từng dòng.');
+  if (reqs.some(r => !r.lot || r.lot.itemId !== r.it.id)) return fail('Chọn lô cho từng dòng.');
+  if (reqs.some(r => !(r.qty > 0))) return fail('Số lượng mỗi dòng phải lớn hơn 0.');
+  if (reqs.some(r => dayDiff(r.lot.exp) <= 0)) return fail('Có lô đã hết hạn, không xuất được.');
+  if (!ox.rcv.trim()) return fail('Nhập tên người nhận hàng.');
+  const used = {};
+  for (const r of reqs) {
+    used[r.lot.id] = (used[r.lot.id] || 0) + r.qty;
+    if (used[r.lot.id] > r.lot.qty) return fail(`Lô ${r.lot.lot}: chỉ còn ${n(r.lot.qty)}, đang xuất ${n(used[r.lot.id])}.`);
+  }
+  let noOut = '';
+  await act(async () => {
+    await runTransaction(db, async t => {
+      noOut = await nextNo(t, wh, 'PX');
+      for (const id of Object.keys(used)) {
+        const l = lots.find(x => x.id === id), rest = l.qty - used[id], ref = doc(db, 'warehouses', wh, 'lots', id);
+        if (rest > 0) t.set(ref, {itemId: l.itemId, lot: l.lot, exp: l.exp, qty: rest, ncc: l.ncc || ''});
+        else t.delete(ref);
+      }
+      const run = {};
+      for (const r of reqs) {
+        const it = r.it;
+        if (!(it.id in run)) run[it.id] = stockOf(it.id);
+        run[it.id] -= r.qty;
+        const parts = [{lot: r.lot.lot, exp: r.lot.exp, take: r.qty}];
+        t.set(doc(collection(db, 'warehouses', wh, 'txs')), {
+          ...txData(wh, it, 'out', r.qty, `${r.lot.lot} (${r.qty})`, ox.why, run[it.id]),
+          no: noOut, parts, rcv: ox.rcv, rcvAddr: ox.rcvAddr, rcvPh: ox.rcvPh
+        });
+      }
+    });
+    outLines = [{item:'', lot:'', qty:''}];
+  }, 'Đã ghi phiếu xuất.');
+  if (noOut) { flash = {ok: true, text: `Đã ghi phiếu xuất ${noOut}.`}; render(); }
+}
+
+function printExport(key){
+  const rows = txs.filter(x => x.type === 'out' && (x.no || x.id) === key).slice().reverse();
+  if (!rows.length) return;
+  const h = rows[0], co = COMPANIES[pi.co] || COMPANIES.sacophar;
+  const d = new Date(h.ts);
+  const ngay = `ngày ${z(d.getDate())} tháng ${z(d.getMonth() + 1)} năm ${d.getFullYear()}`;
+  const hd = `<div class="hdinv">Số hóa đơn: <b>${esc(pi.sh)}</b><br>Ký hiệu hóa đơn: <b>${esc(pi.kh)}</b><br>Ngày hóa đơn: <b>${pi.nh ? fmtDate(pi.nh) : ''}</b></div>`;
+  const lines = [];
+  let total = 0;
+  for (const r of rows) {
+    for (const p of (r.parts || [{lot: r.alloc, exp: '', take: r.qty}])) {
+      lines.push({sku: r.sku, name: r.name, unit: r.unit, lot: p.lot, exp: p.exp, qty: p.take});
+      total += p.take;
+    }
+  }
+  const exp = e => e ? fmtDate(e) : '';
+  const pageSlip = `<div class="page">
+    <div class="ex-head"><div class="co"><b>${co.name}</b><br>${co.addr}<br>Mã số thuế: ${co.mst}</div>
+      <div class="formno"><b>MẪU SỐ 02 - VT</b><br><i>Kèm theo Thông tư số 99/2025/TT-BTC ngày 27 tháng 10 năm 2025 của Bộ Tài chính</i></div></div>
+    <h1>PHIẾU XUẤT KHO</h1>
+    <p class="center"><i>${ngay}</i></p>
+    ${hd}
+    <p>Họ và tên người nhận hàng: <b>${esc(h.rcv)}</b></p>
+    <p>Địa chỉ (Bộ phận): ${esc(h.rcvAddr)}</p>
+    <p>Lý do xuất kho: ${esc(h.note)}</p>
+    <p>Xuất tại kho: ${esc(whName(h.wh))} &nbsp;&nbsp; Địa điểm: ${co.addr}</p>
+    <table><thead><tr><th>STT</th><th>Tên hàng hóa</th><th>Mã số</th><th>Lô</th><th>HSD</th><th>ĐVT</th><th class="r">Số lượng</th></tr></thead>
+    <tbody>${lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.name)}</td><td>${esc(l.sku)}</td><td>${esc(l.lot)}</td><td>${exp(l.exp)}</td><td>${esc(l.unit)}</td><td class="r">${n(l.qty)}</td></tr>`).join('')}
+    <tr><td colspan="6" class="r"><b>Cộng</b></td><td class="r"><b>${n(total)}</b></td></tr></tbody></table>
+    <p>Tổng số tiền (viết bằng chữ): ...............................................................................</p>
+    <p>Số chứng từ gốc kèm theo: ...................................................................................</p>
+    <p class="rightdate"><i>${ngay}</i></p>
+    <div class="sig5">
+      <div><b>NGƯỜI LẬP PHIẾU</b><br><i>(Ký, họ tên)</i></div>
+      <div><b>NGƯỜI NHẬN HÀNG</b><br><i>(Ký, họ tên)</i></div>
+      <div><b>THỦ KHO</b><br><i>(Ký, họ tên)</i></div>
+      <div><b>KẾ TOÁN TRƯỞNG</b><br><i>(Ký, họ tên)</i></div>
+      <div><b>GIÁM ĐỐC</b><br><i>(Ký, họ tên)</i></div>
+    </div>
+  </div>`;
+  const pageBB = `<div class="page">
+    <div class="ex-head"><div class="co"><b>${co.name}</b><br>${co.addr}<br>Mã số thuế: ${co.mst}</div>
+      <div class="formno"><b>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</b><br><i>Độc lập - Tự do - Hạnh phúc</i></div></div>
+    <h1>BIÊN BẢN GIAO HÀNG HOÁ</h1>
+    ${hd}
+    <p><b>Bên A (Bên nhận hàng):</b> ${esc(h.rcv)}</p>
+    <p>Địa chỉ: ${esc(h.rcvAddr)}</p>
+    <p>Điện thoại: ${esc(h.rcvPh)}</p>
+    <p><b>Bên B (Bên giao hàng):</b> ${co.name}</p>
+    <p>Địa chỉ: ${co.addr}</p>
+    <p>Điện thoại: ${esc(pi.ph)}</p>
+    <p><i>Hai bên cùng nhau thống nhất số lượng giao hàng như sau:</i></p>
+    <table><thead><tr><th>STT</th><th>Mã hàng</th><th>Tên hàng</th><th>Số lô</th><th>HSD</th><th>ĐVT</th><th class="r">Số lượng</th></tr></thead>
+    <tbody>${lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.sku)}</td><td>${esc(l.name)}</td><td>${esc(l.lot)}</td><td>${exp(l.exp)}</td><td>${esc(l.unit)}</td><td class="r">${n(l.qty)}</td></tr>`).join('')}</tbody></table>
+    <div class="sig2">
+      <div><b>ĐẠI DIỆN BÊN A</b><br><i>(Ký, ghi rõ họ tên)</i></div>
+      <div><b>ĐẠI DIỆN BÊN B</b><br><i>(Ký, ghi rõ họ tên)</i></div>
+    </div>
+  </div>`;
+  $('slip').innerHTML = `<div class="slipdoc">${pageSlip}${pageBB}</div>`;
+  window.print();
+}
+
 Object.assign(window, {login, register, logout, setWh, setTab, setQ, setFilter, doIn, doOut, doTransfer, destroyLot,
-  saveUser, addWh, openItem, saveItem, deleteItem, loaiChanged, exportXlsx, backupJson, restoreBackup, printTx});
+  saveUser, addWh, openItem, saveItem, deleteItem, loaiChanged, exportXlsx, backupJson, restoreBackup, printTx, setPi, setOx, setLine, pickItem, addLine, delLine, doOutMulti, printExport});
 </script>
 </body>
 </html>
