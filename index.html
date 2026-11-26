@@ -56,12 +56,26 @@ dialog::backdrop{background:rgba(22,32,43,.5)}
 .empty{color:var(--muted);padding:16px 0;text-align:center;margin:0}
 .chk{display:inline-flex;gap:4px;margin-right:12px;font-size:13px;align-items:center;white-space:nowrap}
 .dlg-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+#slip{display:none}
+.slipdoc{background:#fff;color:#000;padding:8px;font-size:13px}
+.slip-head{display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px}
+.slipdoc h1{font-size:18px;text-align:center;margin:0 0 6px}
+.slipmeta{text-align:center;margin:0 0 14px}
+.slipdoc table{width:100%;border-collapse:collapse;font-size:12px}
+.slipdoc th,.slipdoc td{border:1px solid #444;padding:5px;text-align:left}
+.slipdoc .r{text-align:right}
+.sig{display:flex;justify-content:space-between;margin-top:36px;text-align:center}
+.sig div{width:31%}
+.slipfoot{margin-top:20px;color:#000}
+@media print{@page{size:A4;margin:15mm}body>*:not(#slip){display:none!important}#slip{display:block!important}}
 @media(max-width:900px){.grid3{grid-template-columns:1fr}}
 @media(max-width:600px){.form-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div id="app"><p class="empty">Đang tải…</p></div>
+
+<div id="slip"></div>
 
 <dialog id="dlg">
   <form id="itemForm" onsubmit="saveItem(event)">
@@ -89,7 +103,7 @@ dialog::backdrop{background:rgba(22,32,43,.5)}
 <script type="module">
 import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import {getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs, query, where, orderBy, writeBatch} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs, query, where, orderBy, writeBatch, runTransaction} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 const fb = initializeApp({
   apiKey: "AIzaSyApVLPAgfo-Eywx0OhB-CpIY7Ymmfs2x7U",
@@ -138,7 +152,7 @@ const authMsg = e => ({
   'auth/email-already-in-use':'Email này đã đăng ký.', 'auth/weak-password':'Mật khẩu cần ít nhất 6 ký tự.'
 }[e.code] || 'Không thực hiện được, hãy thử lại.');
 
-let me = null, screen = 'loading', authErr = '', items = [], whs = [], users = [], wh = '', lots = [], txs = [], tab = 'stock', q = '', filterItem = '', editId = null, flash = null;
+let me = null, screen = 'loading', authErr = '', items = [], whs = [], users = [], wh = '', lots = [], txs = [], tab = 'stock', q = '', filterItem = '', editId = null, flash = null, justDid = false, totals = {};
 
 const getAll = async ref => (await getDocs(ref)).docs.map(d => ({id: d.id, ...d.data()}));
 const byName = (a,b) => a.name.localeCompare(b.name, 'vi');
@@ -176,6 +190,7 @@ async function act(fn, okText){
     await fn();
     await loadWh();
     flash = {ok:true, text:okText};
+    justDid = true;
   } catch(e) {
     console.error(e);
     flash = {ok:false, text:errMsg(e)};
@@ -206,7 +221,25 @@ async function loadBase(){
   await loadWh();
 }
 
+async function nextNo(t, whId, kind){
+  const ref = doc(db, 'warehouses', whId, 'counters', kind);
+  const s = await t.get(ref);
+  const n0 = s.exists() ? (s.data().n || 0) : 0;
+  t.set(ref, {n: n0 + 1});
+  return `${kind}-${String(n0 + 1).padStart(5, '0')}`;
+}
+
+async function loadTotals(){
+  totals = {};
+  for (const w of allowed()) {
+    for (const l of await getAll(collection(db, 'warehouses', w.id, 'lots'))) {
+      totals[l.itemId] = (totals[l.itemId] || 0) + l.qty;
+    }
+  }
+}
+
 async function loadWh(){
+  await loadTotals();
   if (!wh) { lots = []; txs = []; return; }
   lots = await getAll(collection(db, 'warehouses', wh, 'lots'));
   txs = await getAll(query(collection(db, 'warehouses', wh, 'txs'), orderBy('ts', 'desc')));
@@ -224,8 +257,8 @@ async function register(f){
 }
 const logout = () => signOut(auth);
 
-async function setWh(v){ wh = v; flash = null; await loadWh(); render(); }
-function setTab(t){ tab = t; flash = null; render(); }
+async function setWh(v){ wh = v; flash = null; justDid = false; await loadWh(); render(); }
+function setTab(t){ tab = t; flash = null; justDid = false; render(); }
 function setQ(v){ q = v; drawItems(); }
 function setFilter(v){ filterItem = v; render(); }
 
@@ -238,10 +271,11 @@ async function doIn(f){
   if (!(qty > 0)) return fail('Số lượng phải lớn hơn 0.');
   const id = lotId(it.id, lot, exp), cur = lots.find(l => l.id === id), before = stockOf(it.id);
   await act(async () => {
-    const b = writeBatch(db);
-    b.set(doc(db, 'warehouses', wh, 'lots', id), {itemId: it.id, lot, exp, qty: (cur?.qty || 0) + qty, ncc: cur?.ncc || ncc});
-    b.set(doc(collection(db, 'warehouses', wh, 'txs')), txData(wh, it, 'in', qty, `${lot} (${qty})`, note, before + qty));
-    await b.commit();
+    await runTransaction(db, async t => {
+      const no = await nextNo(t, wh, 'PN');
+      t.set(doc(db, 'warehouses', wh, 'lots', id), {itemId: it.id, lot, exp, qty: (cur?.qty || 0) + qty, ncc: cur?.ncc || ncc});
+      t.set(doc(collection(db, 'warehouses', wh, 'txs')), {...txData(wh, it, 'in', qty, `${lot} (${qty})`, note, before + qty), no});
+    });
   }, `Đã nhập ${n(qty)} ${it.unit} ${it.name}, lô ${lot}.`);
 }
 
@@ -253,11 +287,12 @@ async function doOut(f){
   if (left > 0) return fail(`Chỉ còn ${n(qty - left)} ${it.unit} còn hạn dùng.`);
   const before = stockOf(it.id), reason = f.reason.value, note = f.note.value.trim();
   await act(async () => {
-    const b = writeBatch(db);
-    applyAllocs(b, wh, allocs);
-    b.set(doc(collection(db, 'warehouses', wh, 'txs')), txData(wh, it, 'out', qty,
-      allocs.map(a => `${a.lot} (${a.take})`).join(', '), [reason, note].filter(Boolean).join(' · '), before - qty));
-    await b.commit();
+    await runTransaction(db, async t => {
+      const no = await nextNo(t, wh, 'PX');
+      applyAllocs(t, wh, allocs);
+      t.set(doc(collection(db, 'warehouses', wh, 'txs')), {...txData(wh, it, 'out', qty,
+        allocs.map(a => `${a.lot} (${a.take})`).join(', '), [reason, note].filter(Boolean).join(' · '), before - qty), no});
+    });
   }, `Đã xuất ${n(qty)} ${it.unit} ${it.name}.`);
 }
 
@@ -401,7 +436,7 @@ function ioView(){
   if (!wh) return noWh();
   const opts = items.map(i => `<option value="${i.id}">${esc(i.sku)} · ${esc(i.name)} (tồn ${n(stockOf(i.id))} ${esc(i.unit)})</option>`).join('') || '<option value="">Chưa có hàng hóa</option>';
   const toOpts = allowed().filter(w => w.id !== wh && canKeepWh(w.id)).map(w => `<option value="${w.id}">${esc(w.name)}</option>`).join('') || '<option value="">Không có kho đích</option>';
-  return `${flashHtml()}
+  return `${flashHtml()}${printBtn()}
   ${canKeepHere() ? '' : '<p class="hint">Bạn chỉ xem được kho này. Cần quyền thủ kho để nhập, xuất hoặc chuyển.</p>'}
   <fieldset ${canKeepHere() ? '' : 'disabled'}><div class="grid3">
     <div class="card"><h2>Nhập kho</h2>
@@ -444,7 +479,7 @@ function cardView(){
   const opts = items.map(i => `<option value="${i.id}" ${i.id === id ? 'selected' : ''}>${esc(i.sku)} · ${esc(i.name)}</option>`).join('');
   return `<div class="card">
     <div class="toolbar"><select onchange="setFilter(this.value)" style="flex:1">${opts}</select></div>
-    <p class="hint">Tồn hiện tại tại ${esc(whName(wh))}: <b>${n(stockOf(id))} ${esc(it.unit)}</b></p>
+    <p class="hint">Tồn hiện tại tại ${esc(whName(wh))}: <b>${n(stockOf(id))} ${esc(it.unit)}</b><br>Tồn tổng ${isAdmin() ? 'tất cả kho' : 'các kho bạn được xem'}: <b>${n(totals[id] || 0)} ${esc(it.unit)}</b></p>
     ${rows.length ? `<div class="table-wrap"><table>
       <thead><tr><th>Thời gian</th><th>Loại</th><th class="num">Số lượng</th><th class="num">Tồn sau</th><th>Số lô</th><th>Ghi chú</th><th>Người thực hiện</th></tr></thead>
       <tbody>${rows.map(t => `<tr><td>${fmtTime(t.ts)}</td>
@@ -459,11 +494,11 @@ function logView(){
   if (!wh) return noWh();
   if (!txs.length) return '<div class="card"><p class="empty">Chưa có phiếu nào.</p></div>';
   return `<div class="card table-wrap"><table>
-    <thead><tr><th>Thời gian</th><th>Mã</th><th>Tên hàng</th><th>Loại</th><th class="num">Số lượng</th><th>Số lô</th><th class="num">Tồn sau</th><th>Ghi chú</th><th>Người thực hiện</th></tr></thead>
-    <tbody>${txs.map(t => `<tr><td>${fmtTime(t.ts)}</td><td>${esc(t.sku)}</td><td>${esc(t.name)}</td>
+    <thead><tr><th>Thời gian</th><th>Mã</th><th>Tên hàng</th><th>Loại</th><th class="num">Số lượng</th><th>Số lô</th><th class="num">Tồn sau</th><th>Ghi chú</th><th>Người thực hiện</th><th></th></tr></thead>
+    <tbody>${txs.map((t, i) => `<tr><td>${fmtTime(t.ts)}</td><td>${esc(t.sku)}</td><td>${esc(t.name)}</td>
       <td><span class="tag ${t.type}">${TYPE[t.type] || t.type}</span></td>
       <td class="num">${['in','chuyen_den'].includes(t.type) ? '+' : '−'}${n(t.qty)} ${esc(t.unit)}</td>
-      <td>${esc(t.alloc)}</td><td class="num">${n(t.after)}</td><td>${esc(t.note)}</td><td>${esc(t.by)}</td></tr>`).join('')}</tbody>
+      <td>${esc(t.alloc)}</td><td class="num">${n(t.after)}</td><td>${esc(t.note)}</td><td>${esc(t.by)}</td><td><button class="ghost" onclick="printTx(${i})">In</button></td></tr>`).join('')}</tbody>
   </table></div>`;
 }
 
@@ -473,7 +508,7 @@ function itemsView(){
     ${isAdmin() ? '<button class="primary" onclick="openItem()">Thêm hàng hóa</button>' : ''}
   </div>
   <div class="card table-wrap"><table>
-    <thead><tr><th>Mã</th><th>Tên hàng</th><th>Loại</th><th>Quy cách</th><th>ĐVT</th><th class="num">Tối thiểu</th><th>Danh mục</th><th></th></tr></thead>
+    <thead><tr><th>Mã</th><th>Tên hàng</th><th>Loại</th><th>Quy cách</th><th>ĐVT</th><th class="num">Tối thiểu</th><th class="num">Tồn tổng</th><th>Danh mục</th><th></th></tr></thead>
     <tbody id="irows"></tbody>
   </table></div>`;
 }
@@ -485,10 +520,10 @@ function drawItems(){
   if (!el) return;
   el.innerHTML = list.length ? list.map(i => `<tr>
     <td>${esc(i.sku)}</td><td>${esc(i.name)}</td><td>${esc(LOAI[i.loai]?.label || '')}</td><td>${esc(i.quy)}</td>
-    <td>${esc(i.unit)}</td><td class="num">${n(i.min)}</td><td>${esc(i.cat)}</td>
+    <td>${esc(i.unit)}</td><td class="num">${n(i.min)}</td><td class="num">${n(totals[i.id] || 0)}</td><td>${esc(i.cat)}</td>
     <td>${isAdmin() ? `<div class="actions"><button class="ghost" onclick="openItem('${i.id}')">Sửa</button>
       <button class="ghost danger" onclick="deleteItem('${i.id}')">Xóa</button></div>` : ''}</td></tr>`).join('')
-    : '<tr><td colspan="8" class="empty">Không tìm thấy hàng hóa phù hợp.</td></tr>';
+    : '<tr><td colspan="9" class="empty">Không tìm thấy hàng hóa phù hợp.</td></tr>';
 }
 
 function adminView(){
@@ -576,10 +611,11 @@ function saveBlob(name, blob){
 async function collectAll(){
   const its = await getAll(collection(db, 'items'));
   const ws = await getAll(collection(db, 'warehouses'));
-  const data = {version: 2, exportedAt: new Date().toISOString(), items: its, warehouses: ws, lots: {}, txs: {}};
+  const data = {version: 2, exportedAt: new Date().toISOString(), items: its, warehouses: ws, lots: {}, txs: {}, counters: {}};
   for (const w of ws) {
     data.lots[w.id] = await getAll(collection(db, 'warehouses', w.id, 'lots'));
     data.txs[w.id] = await getAll(collection(db, 'warehouses', w.id, 'txs'));
+    data.counters[w.id] = await getAll(collection(db, 'warehouses', w.id, 'counters'));
   }
   return data;
 }
@@ -652,6 +688,7 @@ async function restoreBackup(){
   d.warehouses.forEach(r => add(['warehouses'], r));
   for (const [wh, arr] of Object.entries(d.lots)) arr.forEach(r => add(['warehouses', wh, 'lots'], r));
   for (const [wh, arr] of Object.entries(d.txs)) arr.forEach(r => add(['warehouses', wh, 'txs'], r));
+  if (d.counters) for (const [wh, arr] of Object.entries(d.counters)) arr.forEach(r => add(['warehouses', wh, 'counters'], r));
 
   try {
     for (let i = 0; i < ops.length; i += 400) {
@@ -668,8 +705,38 @@ async function restoreBackup(){
   render();
 }
 
+function printBtn(){
+  if (!justDid || !txs.length) return '';
+  return `<p class="ok">Đã ghi phiếu. <button class="primary" onclick="printTx(0)">In phiếu</button></p>`;
+}
+
+function printTx(i){
+  const t = txs[i];
+  if (!t) return;
+  const title = {in:'PHIẾU NHẬP KHO', out:'PHIẾU XUẤT KHO', chuyen_di:'PHIẾU CHUYỂN KHO', chuyen_den:'PHIẾU NHẬN CHUYỂN KHO'}[t.type] || 'PHIẾU KHO';
+  const prefix = {in:'PN', out:'PX', chuyen_di:'CD', chuyen_den:'CN'}[t.type] || 'PK';
+  const no = t.no || `${prefix}-${String(t.id || '').slice(0, 8).toUpperCase()}`;
+  const isIn = ['in', 'chuyen_den'].includes(t.type);
+  const it = items.find(x => x.id === t.itemId) || {};
+  $('slip').innerHTML = `<div class="slipdoc">
+    <div class="slip-head"><div><b>${esc(whName(t.wh))}</b></div><div>Ngày: ${fmtTime(t.ts)}</div></div>
+    <h1>${title}</h1>
+    <p class="slipmeta">Số phiếu: <b>${esc(no)}</b></p>
+    <table><thead><tr><th>STT</th><th>Mã hàng</th><th>Tên hàng</th><th>Quy cách</th><th>ĐVT</th><th>Số lô</th><th class="r">Số lượng</th><th class="r">Tồn sau</th></tr></thead>
+    <tbody><tr><td>1</td><td>${esc(t.sku)}</td><td>${esc(t.name)}</td><td>${esc(t.quy || it.quy || '')}</td><td>${esc(t.unit)}</td><td>${esc(t.alloc || '')}</td><td class="r">${n(t.qty)}</td><td class="r">${n(t.after)}</td></tr></tbody></table>
+    <p><b>Ghi chú:</b> ${esc(t.note || '')}</p>
+    <div class="sig">
+      <div>Người lập phiếu<br><br><br>(Ký, ghi rõ họ tên)</div>
+      <div>Thủ kho<br><br><br>(Ký, ghi rõ họ tên)</div>
+      <div>${isIn ? 'Người giao hàng' : 'Người nhận hàng'}<br><br><br>(Ký, ghi rõ họ tên)</div>
+    </div>
+    <p class="slipfoot">Người thực hiện: ${esc(t.by || '')}</p>
+  </div>`;
+  window.print();
+}
+
 Object.assign(window, {login, register, logout, setWh, setTab, setQ, setFilter, doIn, doOut, doTransfer, destroyLot,
-  saveUser, addWh, openItem, saveItem, deleteItem, loaiChanged, exportXlsx, backupJson, restoreBackup});
+  saveUser, addWh, openItem, saveItem, deleteItem, loaiChanged, exportXlsx, backupJson, restoreBackup, printTx});
 </script>
 </body>
 </html>
